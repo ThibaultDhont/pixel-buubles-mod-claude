@@ -1,0 +1,6 @@
+{
+  "name": "mes-mods",
+  "description": "Mods personnels pour Claude Desktop",
+  "owner": { "name": "dhont" },
+  "plugins": [{ "name": "pixel-bubbles", "source": "./" }]
+}

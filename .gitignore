@@ -1,0 +1,17 @@
+# Fichiers du système
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Écrits par Claude Code pendant le développement d'un mod (types, rechargement à chaud)
+.claude-plugin/types/
+
+# Aperçus produits par les outils (option --preview) : à regénérer, pas à versionner
+aperçu*.png
+apercu*.png
+clignement*.png
+
+# Divers
+node_modules/
+*.tmp
+*.log

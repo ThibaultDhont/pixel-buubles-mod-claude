@@ -1,0 +1,5 @@
+# Fins de ligne : toujours LF, sur Windows comme sur Linux (le mod est copié d'un système à l'autre)
+* text=auto eol=lf
+
+# Images sources : binaires
+*.png binary
