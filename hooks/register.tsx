@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { Elements, Register, Timer } from 'claude-code'
+import type { Elements, EngineInterface, Register, Timer } from 'claude-code'
 
 import {
   WAITING_LABEL,
@@ -16,6 +16,7 @@ import { BACKGROUND, BACKGROUND_HEIGHT, BACKGROUND_WIDTH } from './background'
 import { blinkSeed, blinkingPortrait } from './blink'
 import { actionCount, describeLog, lastCalls, markOf } from './journal'
 import type { Mark } from './journal'
+import { QUESTION_EXPRESSION, SLEEP_AFTER_SECONDS, bubbleExpression, restingExpression, workExpression } from './mood'
 import { isOwnMessage } from './origin'
 import { PANEL_BACKGROUND, PANEL_BACKGROUND_HEIGHT, PANEL_BACKGROUND_WIDTH } from './panel-background'
 import { PORTRAITS, PORTRAIT_HEIGHT, PORTRAIT_WIDTH } from './portrait'
@@ -49,7 +50,9 @@ const blink = atom({ plugin: 'pixel-bubbles', key: 'blink' } as const, { seed: 1
 const status = atom({ plugin: 'pixel-bubbles', key: 'status' } as const, {
   turns: 0,
   tools: 0,
+  errors: 0,
   working: false,
+  idle: false,
   contextPercent: null,
   limits: [],
   startedAt: null,
@@ -73,6 +76,22 @@ const blinkingReflechi = (seed: number): string => {
   }
 
   return blinkingSource
+}
+
+// Après SLEEP_AFTER_SECONDS sans activité, le portrait du panneau s'endort ; le début d'un tour le
+// réveille. La minuterie repart à chaque fin de tour (et au démarrage de la session). Ces fonctions
+// sont au niveau supérieur du fichier : le moteur n'accepte de recevoir `$` que d'une fonction
+// déclarée là.
+let idleTimer: Timer | undefined
+const stopIdle = () => {
+  idleTimer?.cancel()
+  idleTimer = undefined
+}
+const startIdle = ($: EngineInterface) => {
+  stopIdle()
+  idleTimer = $.clock.after(SLEEP_AFTER_SECONDS * 1000, () => {
+    void update($, status, current => ({ ...current, idle: true }))
+  })
 }
 
 // Cadre doré et voile bleu léger façon menu de jeu. Le voile est translucide : il ne
@@ -183,6 +202,7 @@ export const register: Register = on => {
     // Panneau de statut : la commande /statut, les chiffres de départ, et le panneau lui-même si
     // Desktop est déjà connecté. Une panne ici ne doit pas priver le reste du mod de son départ.
     try {
+      startIdle($)
       await $.command.register({
         name: 'statut',
         description: 'Ouvre le panneau de statut : portrait et jauges de la session',
@@ -221,6 +241,7 @@ export const register: Register = on => {
   on('turn.start', async ($, e, next) => {
     if (e.agentId === undefined) {
       stopTimer()
+      stopIdle()
       // un nouveau calendrier de clignements à chaque tour, d'après l'heure de départ ; si l'heure
       // manque, le tour garde la graine précédente, et le reste du hook (chronomètre) s'exécute
       try {
@@ -229,7 +250,7 @@ export const register: Register = on => {
       } catch {
         // le clignement est un plus
       }
-      await update($, status, current => ({ ...current, working: true }))
+      await update($, status, current => ({ ...current, working: true, idle: false, errors: 0 }))
       await update($, work, () => ({ seconds: 0, tools: 0, label: WAITING_LABEL }))
       timer = $.clock.every(1000, () => {
         void update($, work, current => ({ ...current, seconds: current.seconds + 1 }))
@@ -243,6 +264,7 @@ export const register: Register = on => {
     if (e.agentId === undefined) {
       stopTimer()
       await update($, status, current => ({ ...current, working: false, turns: current.turns + 1 }))
+      startIdle($)
     }
 
     return next(e)
@@ -250,9 +272,12 @@ export const register: Register = on => {
 
   // Chaque appel d'outil de la boucle principale met à jour l'action affichée, sauf les outils
   // internes de l'application (mcp__ccd_*), qui ne comptent pas. Le hook ne modifie jamais l'appel :
-  // il passe la main tel quel.
+  // il passe la main tel quel, et note seulement si l'outil a échoué (le portrait de la bande
+  // s'énerve après plusieurs erreurs dans un tour).
   on('tool.call', async ($, e, next) => {
-    if (e.agentId === undefined && !isInternalTool(String(e.tool))) {
+    const counted = e.agentId === undefined && !isInternalTool(String(e.tool))
+
+    if (counted) {
       const input: Readonly<Record<string, unknown>> = { ...e }
       await update($, work, current => ({
         ...current,
@@ -262,7 +287,13 @@ export const register: Register = on => {
       await update($, status, current => ({ ...current, tools: current.tools + 1 }))
     }
 
-    return next(e)
+    const result = await next(e)
+
+    if (counted && result.isError === true) {
+      await update($, status, current => ({ ...current, errors: current.errors + 1 }))
+    }
+
+    return result
   }).catch(($, e, next) => next(e))
 
   // Chaque bloc de réponse de l'assistant devient une bulle de dialogue, avec son portrait
@@ -279,9 +310,10 @@ export const register: Register = on => {
 
     const { Box, Markdown, Svg, Text } = $.ui.resolve(e)
 
+    // le portrait dépend du seul texte de la bulle (hooks/mood.ts) : il ne change pas au redessin
     return (
       <Box flexDirection="row" alignItems="flex-end" marginY="xs">
-        {portraitWithTail({ Box, Svg }, 'neutre')}
+        {portraitWithTail({ Box, Svg }, bubbleExpression(e.props.text))}
         <Box
           flexDirection="column"
           borderStyle="double"
@@ -472,7 +504,7 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column">
         <Box flexDirection="row" alignItems="flex-end" marginY="xs">
-          {portraitWithTail({ Box, Svg }, 'neutre')}
+          {portraitWithTail({ Box, Svg }, QUESTION_EXPRESSION)}
           <Box
             borderStyle="double"
             borderColor={FRAME}
@@ -526,7 +558,12 @@ export const register: Register = on => {
 
     const { Box, Svg, Text } = $.ui.resolve(e)
     const state = await read($, status)
-    const { label } = await read($, work)
+    const { label, tools: turnTools } = await read($, work)
+    // au travail : pensif, concentré, énervé ou fatigué selon le tour ; au repos : neutre, fatigué ou
+    // endormi (hooks/mood.ts)
+    const expression = state.working
+      ? workExpression({ tools: turnTools, errors: state.errors, contextPercent: state.contextPercent })
+      : restingExpression({ contextPercent: state.contextPercent, idle: state.idle })
     const elapsed = state.startedAt === null ? null : (await $.clock.now()) - state.startedAt
 
     // Le décor est tout en bas : la racine prend la hauteur que Desktop donne au corps du panneau
@@ -544,7 +581,7 @@ export const register: Register = on => {
         <Box flexDirection="column" alignItems="stretch" gap="sm">
           <Box alignSelf="center">
             <Svg
-              source={state.working ? PORTRAITS.reflechi : PORTRAITS.neutre}
+              source={PORTRAITS[expression]}
               alt="Portrait du personnage"
               width={PORTRAIT_WIDTH}
               height={PORTRAIT_HEIGHT}
@@ -648,6 +685,11 @@ export const register: Register = on => {
     const { Box, Svg, Text } = $.ui.resolve(e)
     const { seconds, tools, label } = await read($, work)
     const { seed } = await read($, blink)
+    const { errors, contextPercent } = await read($, status)
+    // pensif (et clignant) par défaut ; concentré après beaucoup d'outils, énervé après plusieurs
+    // erreurs, fatigué si le contexte est presque plein (hooks/mood.ts). Seul le portrait pensif a
+    // ses paupières : les autres expressions ne clignent pas.
+    const expression = workExpression({ tools, errors, contextPercent })
 
     return (
       <Box
@@ -680,13 +722,22 @@ export const register: Register = on => {
           flexDirection="row"
           alignItems="center"
         >
-          <Svg
-            source={blinkingReflechi(seed)}
-            alt="Portrait du personnage"
-            width={PORTRAIT_WIDTH}
-            height={PORTRAIT_HEIGHT}
-            isInteractive
-          />
+          {expression === 'reflechi' ? (
+            <Svg
+              source={blinkingReflechi(seed)}
+              alt="Portrait du personnage"
+              width={PORTRAIT_WIDTH}
+              height={PORTRAIT_HEIGHT}
+              isInteractive
+            />
+          ) : (
+            <Svg
+              source={PORTRAITS[expression]}
+              alt="Portrait du personnage"
+              width={PORTRAIT_WIDTH}
+              height={PORTRAIT_HEIGHT}
+            />
+          )}
           <Box flexShrink={0}>
             <Svg
               source={TAIL}

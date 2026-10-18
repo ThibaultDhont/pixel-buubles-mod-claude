@@ -24,6 +24,17 @@ import {
 } from '../hooks/blink'
 import { EYELIDS_CLOSED, EYELIDS_HALF } from '../hooks/eyelids'
 import { actionCount, describeLog, lastCalls, markOf, shorten } from '../hooks/journal'
+import {
+  ANGRY_AFTER_ERRORS,
+  FOCUSED_AFTER_TOOLS,
+  QUESTION_EXPRESSION,
+  SLEEP_AFTER_SECONDS,
+  TIRED_AT_CONTEXT,
+  bubbleExpression,
+  endsWithQuestion,
+  restingExpression,
+  workExpression,
+} from '../hooks/mood'
 import { isOwnMessage } from '../hooks/origin'
 import { PANEL_BACKGROUND } from '../hooks/panel-background'
 import { PORTRAITS } from '../hooks/portrait'
@@ -817,6 +828,212 @@ describe('pixel-bubbles : clignement', () => {
 
   test('une source sans balise fermante est rendue telle quelle', () => {
     expect(blinkingPortrait('pas un svg', 1)).toBe('pas un svg')
+  })
+})
+
+describe('pixel-bubbles : expressions', () => {
+  test('une bulle prend son portrait d\'après son texte : excuses, surprise, question, joie', () => {
+    const cases: [string, string][] = [
+      ['Bonjour, voici le résultat de la lecture.', 'neutre'],
+      ['Suite', 'neutre'],
+      ["Je suis désolé, ça n'a pas fonctionné.", 'triste'],
+      ['Malheureusement, le fichier est introuvable.', 'triste'],
+      ['Toutes mes excuses pour la confusion.', 'triste'],
+      ['Sorry, that failed.', 'triste'],
+      ['Étonnant : le test passe sans rien changer.', 'surpris'],
+      ['Oh, il y a déjà un fichier du même nom.', 'surpris'],
+      ['Voulez-vous que je continue ?', 'curieux'],
+      ['**Voulez-vous continuer ?**', 'curieux'],
+      ['(Voulez-vous continuer ?)', 'curieux'],
+      ['Le mod est prêt.\n\nSouhaitez-vous le tester ?\n', 'curieux'],
+      ['Parfait, c’est fait.', 'content'],
+      ['Le plugin est mis à jour avec succès.', 'content'],
+      ['Merci !', 'content'],
+      ['Tous les tests passent.', 'content'],
+      ['Tous les tests ont échoué.', 'neutre'],
+      // le premier signal gagne : des excuses l'emportent sur une question ou sur un « voilà »
+      ['Désolé, voulez-vous que je réessaie ?', 'triste'],
+      ['Voilà, mais malheureusement une erreur reste.', 'triste'],
+      // la question finale l'emporte sur la joie
+      ['Parfait, tout est prêt. On continue ?', 'curieux'],
+      // des mots entiers seulement : « supervision » n'est pas « super »
+      ['La supervision des fichiers est lancée.', 'neutre'],
+    ]
+
+    for (const [text, expected] of cases) {
+      expect(`${bubbleExpression(text)} <- ${text}`).toBe(`${expected} <- ${text}`)
+    }
+
+    // un mot au milieu d'un long exposé ne dit rien du ton : seuls le début et la fin comptent
+    const long = `${'mot '.repeat(400)}désolé ${'autre '.repeat(400)}`
+    expect(bubbleExpression(long)).toBe('neutre')
+    expect(bubbleExpression(`Désolé. ${long}`)).toBe('triste')
+    expect(bubbleExpression(`${long} Malheureusement.`)).toBe('triste')
+  })
+
+  test('la fin d\'un texte se reconnaît comme une question', () => {
+    expect(endsWithQuestion('Quoi ?')).toBe(true)
+    expect(endsWithQuestion('Quoi ? \n\n')).toBe(true)
+    expect(endsWithQuestion('Quoi ?**')).toBe(true)
+    expect(endsWithQuestion('Il dit « quoi ? »')).toBe(true)
+    expect(endsWithQuestion('Une question ? Non.')).toBe(false)
+    expect(endsWithQuestion('')).toBe(false)
+  })
+
+  test('la bande : pensif, concentré, énervé, fatigué selon le tour', () => {
+    const base = { tools: 0, errors: 0, contextPercent: null }
+
+    expect(workExpression(base)).toBe('reflechi')
+    expect(workExpression({ ...base, tools: FOCUSED_AFTER_TOOLS - 1 })).toBe('reflechi')
+    expect(workExpression({ ...base, tools: FOCUSED_AFTER_TOOLS })).toBe('concentre')
+    expect(workExpression({ ...base, errors: ANGRY_AFTER_ERRORS - 1 })).toBe('reflechi')
+    expect(workExpression({ ...base, errors: ANGRY_AFTER_ERRORS })).toBe('enerve')
+    expect(workExpression({ ...base, contextPercent: TIRED_AT_CONTEXT - 1 })).toBe('reflechi')
+    expect(workExpression({ ...base, contextPercent: TIRED_AT_CONTEXT })).toBe('fatigue')
+    // énervé l'emporte sur fatigué, qui l'emporte sur concentré
+    expect(workExpression({ tools: 30, errors: 5, contextPercent: 99 })).toBe('enerve')
+    expect(workExpression({ tools: 30, errors: 0, contextPercent: 99 })).toBe('fatigue')
+    expect(workExpression({ tools: 30, errors: 2, contextPercent: 10 })).toBe('concentre')
+  })
+
+  test('le panneau au repos : neutre, fatigué, endormi', () => {
+    expect(restingExpression({ contextPercent: null, idle: false })).toBe('neutre')
+    expect(restingExpression({ contextPercent: 40, idle: false })).toBe('neutre')
+    expect(restingExpression({ contextPercent: TIRED_AT_CONTEXT, idle: false })).toBe('fatigue')
+    expect(restingExpression({ contextPercent: 10, idle: true })).toBe('endormi')
+    // endormi l'emporte sur fatigué
+    expect(restingExpression({ contextPercent: 99, idle: true })).toBe('endormi')
+    expect(SLEEP_AFTER_SECONDS).toBe(300)
+    expect(QUESTION_EXPRESSION).toBe('curieux')
+  })
+
+  test('une bulle d\'assistant affiche le portrait que son texte annonce', async $ => {
+    for (const [text, expression] of [
+      ['Bonjour **monde**', 'neutre'],
+      ['Désolé, ça a échoué.', 'triste'],
+      ['Voulez-vous continuer ?', 'curieux'],
+      ['Parfait, c’est fait.', 'content'],
+    ] as const) {
+      const ui = await $.ui.mount({
+        plugin: 'pixel-bubbles',
+        surface: 'desktop',
+        component: 'AssistantMessage',
+        props: { text, isFirstOfReply: true },
+      })
+
+      expect((await ui.findAll({ type: 'Svg' }))[0]?.props.source).toBe(PORTRAITS[expression])
+      await ui.unmount()
+    }
+  })
+
+  test('la bulle qui précède une question à choix a le portrait curieux', async ($, on) => {
+    on('ui.render', { component: 'AskUserQuestion' }, () => ({ type: 'engine', ref: 0 }))
+
+    const ui = await $.ui.mount({
+      plugin: 'pixel-bubbles',
+      surface: 'desktop',
+      component: 'AskUserQuestion',
+      props: { tool: 'AskUserQuestion', questions: [{ question: 'Quelle couleur ?' }] },
+    })
+
+    expect((await ui.findAll({ type: 'Svg' }))[0]?.props.source).toBe(PORTRAITS.curieux)
+    await ui.unmount()
+  })
+
+  test('la bande s\'énerve après trois erreurs d\'outils et se calme au tour suivant', async ($, on) => {
+    const clock = mock.clock(on)
+    on('turn.start', (_$, e) => ({ turnId: e.turnId }))
+    on('tool.call', () => ({ isError: true, result: 'échec', text: 'échec' }))
+
+    const ui = await $.ui.mount({
+      plugin: 'pixel-bubbles',
+      surface: 'desktop',
+      component: 'AbovePrompt',
+      props: BAND,
+    })
+    const portrait = async () => (await ui.findAll({ type: 'Svg' }))[1]
+
+    // au départ : pensif, dans le cadre qui joue le clignement
+    expect((await portrait())?.props.source).toBe(blinkingPortrait(PORTRAITS.reflechi, 1))
+    expect((await portrait())?.props.isInteractive).toBe(true)
+
+    await $.turn.start({ text: 'salut', turnId: 't1' })
+    for (let i = 1; i <= 2; i++) await $.tool.call({ tool: 'Bash', command: 'faux', tool_use_id: `e${i}` })
+    expect((await portrait())?.props.source).not.toBe(PORTRAITS.enerve)
+    await $.tool.call({ tool: 'Bash', command: 'faux', tool_use_id: 'e3' })
+    expect((await portrait())?.props.source).toBe(PORTRAITS.enerve)
+    // un portrait sans paupières : pas de cadre interactif
+    expect((await portrait())?.props.isInteractive).toBeUndefined()
+
+    // le portrait reste énervé tant que le tour dure, même quand la bande se redessine chaque seconde
+    await clock.advance(3000)
+    expect((await portrait())?.props.source).toBe(PORTRAITS.enerve)
+
+    // le tour suivant repart de zéro : de nouveau pensif
+    await $.turn.start({ text: 'encore', turnId: 't2' })
+    expect(((await portrait())?.props.source as string).startsWith(PORTRAITS.reflechi.slice(0, -6))).toBe(true)
+
+    await ui.unmount()
+  })
+
+  test('la bande se concentre après beaucoup d\'outils', async ($, on) => {
+    mock.clock(on)
+    on('turn.start', (_$, e) => ({ turnId: e.turnId }))
+    on('tool.call', () => ({ result: 'ok', text: 'ok' }))
+
+    const ui = await $.ui.mount({
+      plugin: 'pixel-bubbles',
+      surface: 'desktop',
+      component: 'AbovePrompt',
+      props: BAND,
+    })
+
+    await $.turn.start({ text: 'salut', turnId: 't1' })
+    for (let i = 1; i < FOCUSED_AFTER_TOOLS; i++) await $.tool.call({ tool: 'Read', file_path: 'a.md', tool_use_id: `r${i}` })
+    expect((await ui.findAll({ type: 'Svg' }))[1]?.props.source).not.toBe(PORTRAITS.concentre)
+    await $.tool.call({ tool: 'Read', file_path: 'a.md', tool_use_id: 'r10' })
+    expect((await ui.findAll({ type: 'Svg' }))[1]?.props.source).toBe(PORTRAITS.concentre)
+
+    await ui.unmount()
+  })
+
+  test('le panneau : fatigué si le contexte est plein, endormi après cinq minutes, réveillé par un tour', async ($, on) => {
+    const clock = mock.clock(on)
+    on('turn.start', (_$, e) => ({ turnId: e.turnId }))
+    on('turn.complete', () => ({ text: '' }))
+    on('session.measure', (_$, e) => ({ changed: e.changed }))
+
+    const ui = await $.ui.mount({
+      plugin: 'pixel-bubbles',
+      surface: 'desktop',
+      component: 'Pane',
+      requestId: 'statut',
+      props: PANE_PROPS,
+    })
+    const portrait = async () => (await ui.findAll({ type: 'Svg' }))[0]?.props.source
+
+    expect(await portrait()).toBe(PORTRAITS.neutre)
+
+    // contexte presque plein : fatigué
+    await $.session.measure({ context: { window: 200000, tokens: 180000, percent: 90 }, rateLimits: [], changed: ['context'] })
+    expect(await portrait()).toBe(PORTRAITS.fatigue)
+    await $.session.measure({ context: { window: 200000, tokens: 20000, percent: 10 }, rateLimits: [], changed: ['context'] })
+    expect(await portrait()).toBe(PORTRAITS.neutre)
+
+    // un tour, puis cinq minutes sans rien : endormi ; un tour le réveille
+    await $.turn.start({ text: 'salut', turnId: 't1' })
+    expect(await portrait()).toBe(PORTRAITS.reflechi)
+    await $.turn.complete({ answer: 'ok', durationMs: 1000, isAborted: false, reason: 'answer', turnId: 't1' })
+    expect(await portrait()).toBe(PORTRAITS.neutre)
+    await clock.advance(SLEEP_AFTER_SECONDS * 1000 - 1000)
+    expect(await portrait()).toBe(PORTRAITS.neutre)
+    await clock.advance(2000)
+    expect(await portrait()).toBe(PORTRAITS.endormi)
+
+    await $.turn.start({ text: 'encore', turnId: 't2' })
+    expect(await portrait()).toBe(PORTRAITS.reflechi)
+
+    await ui.unmount()
   })
 })
 

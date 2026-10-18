@@ -11,7 +11,11 @@ export type Attached = { ids: string[]; texts: string[] }
 export type Status = {
   turns: number
   tools: number
+  // outils en erreur dans le tour en cours (remis à zéro au début de chaque tour)
+  errors: number
   working: boolean
+  // vrai après plusieurs minutes sans activité (voir hooks/mood.ts)
+  idle: boolean
   contextPercent: number | null
   limits: { kind: string; percent: number }[]
   startedAt: number | null

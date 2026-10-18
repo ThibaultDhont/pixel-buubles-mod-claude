@@ -67,6 +67,53 @@ bien dessinée par le mod : constaté sur capture.
 Si Desktop refuse un arbre, il dessine sa propre ligne : rien n'est perdu. Les phrases du journal
 sont dans `hooks/journal.ts`.
 
+## Expressions du portrait (version 0.32.0, premier jeu)
+
+Le portrait change selon la situation. Les règles sont dans `hooks/mood.ts` (fonctions pures,
+testées) ; les listes de mots et les seuils s'y règlent. Trois familles :
+
+**Une bulle d'assistant** : d'après son seul texte, donc elle **garde son portrait** quand Desktop la
+redessine. Le premier signal trouvé gagne, dans cet ordre :
+
+| Portrait | Quand le texte contient… |
+| :- | :- |
+| `triste` | des excuses ou un regret : « désolé », « navré », « malheureusement », « hélas », « mes excuses », « sorry », « unfortunately »… |
+| `surpris` | de l'étonnement : « étonnant », « surprenant », « inattendu », « bizarre », « curieusement », « oh », « tiens », « surprisingly »… |
+| `curieux` | une **question en dernière ligne** (le texte finit par « ? », au Markdown et aux guillemets près) |
+| `content` | de la joie ou un succès : « parfait », « bravo », « c'est fait », « avec succès », « les tests passent », « merci »… |
+| `neutre` | rien de tout cela |
+
+Les mots sont cherchés en français et en anglais, entiers (« supervision » n'est pas « super »). Un
+texte long n'est lu que par ses 350 premiers et 350 derniers caractères : un mot au milieu d'un long
+exposé ne dit rien du ton. La **bulle qui précède une question à choix** (`AskUserQuestion`) est
+toujours `curieux`.
+
+**La bande pendant le travail** : d'après le tour en cours.
+
+| Portrait | Quand |
+| :- | :- |
+| `enerve` | 3 erreurs d'outils ou plus dans le tour (`ANGRY_AFTER_ERRORS`) |
+| `fatigue` | contexte rempli à 85 % ou plus (`TIRED_AT_CONTEXT`) |
+| `concentre` | 10 outils ou plus dans le tour (`FOCUSED_AFTER_TOOLS`) |
+| `reflechi` | sinon (le portrait pensif, qui **cligne des yeux**) |
+
+Dans cet ordre de priorité. Les erreurs sont comptées par le hook `tool.call` (résultat en
+`isError`), hors outils internes de l'application et hors sous-agents, et remises à zéro à chaque tour.
+Seul le portrait pensif a ses paupières : les autres expressions ne clignent pas, et le portrait
+change d'image quand la situation change.
+
+**Le panneau de statut** : au travail, mêmes règles que la bande ; au repos :
+
+| Portrait | Quand |
+| :- | :- |
+| `endormi` | 5 minutes sans activité (`SLEEP_AFTER_SECONDS`, minuterie relancée à chaque fin de tour et au démarrage de la session ; un nouveau tour réveille) |
+| `fatigue` | contexte rempli à 85 % ou plus |
+| `neutre` | sinon |
+
+**Pas encore utilisés** : l'expression `surpris` pour un tour interrompu (Échap), et `triste` après
+un tour terminé en erreur : le texte de la bulle seul les décide pour l'instant. **À confirmer** par
+des essais : l'effet des mots sur les vraies réponses (faux positifs et réponses ratées).
+
 ## Clignement des yeux (version 0.27.0, irrégulier depuis la 0.29.0)
 
 Le portrait pensif de la bande de réflexion cligne des yeux : **constaté à l'œil, ça marche**.
@@ -290,9 +337,8 @@ remplacez ces fichiers, puis, depuis ce dossier :
 node tools/build_mod_portraits.js . --width 96 --colors 72 neutre=art/neutre.png reflechi=art/reflechi.png content=art/content.png triste=art/triste.png enerve=art/enerve.png curieux=art/curieux.png surpris=art/surpris.png fatigue=art/fatigue.png endormi=art/endormi.png concentre=art/concentre.png
 ```
 
-**Les expressions ne servent pas encore** : elles sont dans `hooks/portrait.ts` (type `Expression`),
-mais le mod n'utilise toujours que `neutre` (bulles, panneau) et `reflechi` (bande, panneau au
-travail). Le choix du portrait selon la situation est l'étape suivante.
+Les expressions sont dans `hooks/portrait.ts` (type `Expression`). Depuis la 0.32.0, le mod les
+choisit selon la situation : voir « Expressions du portrait ».
 
 Le script réduit chaque image à la largeur demandée, ramène toutes les images à une palette
 commune de quelques couleurs (le rendu « pixel art limité »), puis les convertit en dessin
@@ -403,6 +449,7 @@ claude plugin test .
   fonctions pures testées.
 - `hooks/journal.ts` : marques (✓ ✗ ▸) et phrases du journal d'actions, fonctions pures testées.
 - `hooks/status.ts` : jauges, libellés des limites et durée de session du panneau de statut.
+- `hooks/mood.ts` : le choix du portrait selon la situation (mots, seuils), fonctions pures testées.
 - `hooks/panel-background.ts` : décor du panneau de statut en SVG, **généré** (option `--name`).
 - `hooks/blink.ts` : le clignement (ajoute les paupières animées au portrait pensif).
 - `hooks/eyelids.ts` : paupières mi-closes et closes en SVG, **généré** par `tools/build_blink.js`.
