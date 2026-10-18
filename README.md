@@ -280,13 +280,19 @@ synchronise tout seul.
 
 ## Changer les images
 
-Les portraits sont `art/neutre.png` et `art/reflechi.png`. Ils peuvent être de **n'importe quelle
-taille** (une illustration en haute résolution convient) ; un fond transparent est préférable.
-Pour les changer, remplacez ces fichiers, puis, depuis ce dossier :
+Il y a dix portraits (version 0.31.0) : `art/neutre.png` et `art/reflechi.png`, puis huit expressions
+(`content`, `triste`, `enerve`, `curieux`, `surpris`, `fatigue`, `endormi`, `concentre`), découpées
+d'une planche (voir plus bas). Les images peuvent être de **n'importe quelle taille** (une
+illustration en haute résolution convient) ; un fond transparent est préférable. Pour les changer,
+remplacez ces fichiers, puis, depuis ce dossier :
 
 ```
-node tools/build_mod_portraits.js . --width 96 --colors 40 neutre=art/neutre.png reflechi=art/reflechi.png
+node tools/build_mod_portraits.js . --width 96 --colors 72 neutre=art/neutre.png reflechi=art/reflechi.png content=art/content.png triste=art/triste.png enerve=art/enerve.png curieux=art/curieux.png surpris=art/surpris.png fatigue=art/fatigue.png endormi=art/endormi.png concentre=art/concentre.png
 ```
+
+**Les expressions ne servent pas encore** : elles sont dans `hooks/portrait.ts` (type `Expression`),
+mais le mod n'utilise toujours que `neutre` (bulles, panneau) et `reflechi` (bande, panneau au
+travail). Le choix du portrait selon la situation est l'étape suivante.
 
 Le script réduit chaque image à la largeur demandée, ramène toutes les images à une palette
 commune de quelques couleurs (le rendu « pixel art limité »), puis les convertit en dessin
@@ -294,14 +300,36 @@ vectoriel net et réécrit `hooks/portrait.ts`.
 
 - `--width` : largeur affichée en pixels (96 par défaut). La hauteur suit la première image, et les
   autres sont ajustées à la même taille : gardez des proportions voisines.
-- `--colors` : taille de la palette commune (24 par défaut, 40 recommandés pour garder les petits
-  détails de couleur, comme des yeux verts, qu'une palette trop courte absorbe dans le bleu).
+- `--colors` : taille de la palette commune (24 par défaut). **72 pour les dix portraits** : avec 40,
+  les yeux verts de tous les portraits devenaient gris-bleu (une palette trop courte les absorbe dans
+  le bleu des cheveux). Plus il y a de couleurs, plus chaque image pèse (56 à 62 Ko en SVG à 72
+  couleurs ; `portrait.ts` fait environ 600 Ko).
 - `--preview aperçu.png` : écrit une planche agrandie pour juger le rendu avant de l'adopter.
 - `--inspect` : décrit les images (taille, format, transparence) sans rien écrire.
 
-Pour ajouter une expression, ajoutez `nom=chemin.png` à la commande, puis utilisez-la dans
-`hooks/expression.ts`. Chaque image doit tenir sous 131 072 caractères une fois convertie : le
-script le vérifie et suggère de baisser `--colors` ou `--width` sinon.
+Pour ajouter une expression, ajoutez `nom=chemin.png` à la commande (le nom devient un identifiant du
+code : sans accent). Chaque image doit tenir sous 131 072 caractères une fois convertie : le script
+le vérifie et suggère de baisser `--colors` ou `--width` sinon.
+
+### Une planche de plusieurs expressions
+
+Les huit expressions viennent d'une seule image (deux rangées de quatre portraits sur fond blanc,
+générée ailleurs). `tools/cut_portrait_sheet.js` la découpe et écrit un PNG par portrait dans `art/` :
+
+```
+node tools/cut_portrait_sheet.js . planche.png --names content,triste,enerve,curieux,surpris,fatigue,endormi,concentre
+```
+
+La planche doit être un **PNG** (une planche webp s'enregistre en PNG avec Paint). Le script repère
+la grille tout seul, retire le fond blanc (le blanc des yeux reste) et **aligne** chaque portrait sur
+le cadrage de `art/neutre.png` : même distance entre les yeux (donc même taille de visage), mêmes
+yeux au même endroit en largeur, buste calé en bas du cadre comme dans une bulle. Un portrait aux
+yeux fermés (`endormi`) prend la position médiane des autres. Les noms (`--names`) sont dans l'ordre
+de lecture, ligne par ligne. Options : `--reference` (cadrage de référence, `art/neutre.png`),
+`--scale` (taille des PNG, 0,5 de la référence par défaut : 367×394 px, assez fin pour 96 px, quatre
+fois plus léger), `--out`. Pour de bons résultats, les portraits de la planche doivent garder la
+tête, les yeux et la bouche à peu près aux mêmes endroits d'une expression à l'autre. Ensuite, relancer
+`build_mod_portraits.js` (commande ci-dessus), puis `build_blink.js`.
 
 Après un changement du portrait pensif, refaites aussi les paupières du clignement (voir
 « Clignement des yeux »). Après un changement d'image, un rechargement du mod est nécessaire :
@@ -378,6 +406,7 @@ claude plugin test .
 - `hooks/panel-background.ts` : décor du panneau de statut en SVG, **généré** (option `--name`).
 - `hooks/blink.ts` : le clignement (ajoute les paupières animées au portrait pensif).
 - `hooks/eyelids.ts` : paupières mi-closes et closes en SVG, **généré** par `tools/build_blink.js`.
+- `tools/cut_portrait_sheet.js` : découpe une planche d'expressions en PNG alignés sur `neutre.png`.
 - `hooks/origin.ts` : distingue vos messages des lignes « utilisateur » automatiques.
 - `hooks/attachments.ts` : repère les messages avec pièce jointe, qui gardent le dessin de Desktop.
 - `types/index.d.ts` : contrat de l'état partagé du mod.

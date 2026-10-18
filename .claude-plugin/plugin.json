@@ -1,6 +1,6 @@
 {
   "name": "pixel-bubbles",
-  "version": "0.30.0",
+  "version": "0.31.0",
   "description": "Les messages de l'assistant (double cadre doré) et les vôtres (double cadre bleu clair, plus étroits, sauf avec pièce jointe) s'affichent en bulles avec un portrait pixel art ; pendant le travail, un portrait pensif et une fenêtre d'état apparaissent au-dessus du champ de saisie ; les appels d'outils forment un journal d'actions encadré en doré (coche ou croix).",
   "types": "./types/index.d.ts"
 }
